@@ -1,52 +1,8 @@
-# iStoreOS 自用固件框架（x86_64 / N100）
+# iStoreOS 自用固件框架（x86_64）
 
-基于 [iStoreOS `openwrt-25.12`](https://github.com/istoreos/istoreos/tree/openwrt-25.12) 源码，
-给你一套「改一个文件 → 云端出固件」的骨架。不需要写代码。
+基于 [iStoreOS `openwrt-25.12`](https://github.com/istoreos/istoreos/tree/openwrt-25.12) 源码.
 
-## 它能做什么
-
-| 你的需求 | 框架里对应的东西 |
-| --- | --- |
-| 自动识别有几个网口 | `files/etc/uci-defaults/20-net-autodetect` |
-| SSD 存储可用 | `device.conf` 的 `KERNEL_SIZE_MB=128` / `ROOTFS_SIZE_MB=2048` + 可选 `EXTEND_ROOTFS=1` |
-| 管理地址 192.168.6.1、密码为空 | `device.conf` 的 `LAN_IP` / `ROOT_PASSWORD=""` |
-| 个性签名（编译者 + 自动日期） | `device.conf` 的 `BUILDER_NAME`；日期在编译时自动生成，打进登录横幅和 LuCI 页脚 |
-| 家庭千兆带宽 | `device.conf` 的 `HOME_BANDWIDTH=1000` → 首启自动开流卸载 + 多核调度（`21-bandwidth`） |
-| 方便加软件 | `configs/packages.list`，一行一个包 |
-| 改设备名 | `device.conf` 的 `DEVICE_NAME` / `BRAND_NAME` |
-| 改软件显示名 | `brand/apps.tsv`，一行一个改名 |
-| 默认主题 | `device.conf` 的 `THEME`（kucat / argon / bootstrap） |
-
-## 目录结构
-
-```
-istoreos-fw/
-├─ device.conf              ★ 唯一要改的文件（设备名/IP/密码/网口/存储/签名/主题）
-├─ configs/
-│  ├─ x86_64.defconfig      目标平台与内核驱动（一般不用动）
-│  └─ packages.list         ★ 要预装什么软件，一行一个
-├─ brand/apps.tsv           ★ 软件改名映射（LuCI 里显示的名字）
-├─ files/                    打进固件的 overlay（改完会替换系统里的同名文件）
-│  └─ etc/
-│     ├─ device-profile.tmpl      编译时生成，运行时只读的参数表
-│     └─ uci-defaults/            首次启动自动执行的脚本（跑完自动删）
-│        ├─ 10-brand              主机名、时区、语言、登录横幅（含编译者签名）
-│        ├─ 11-theme              启用默认主题（kucat/argon）
-│        ├─ 20-net-autodetect     网口自动识别 + 生成网络配置
-│        ├─ 21-bandwidth          千兆带宽：流卸载 + 多核调度
-│        ├─ 30-ssd-extend         SSD 扩容（可选，默认关闭）
-│        ├─ 40-root-nopasswd      空密码 / 设密码
-│        └─ 50-openclash-core     自动下载 OpenClash Meta 核心（有网就装）
-├─ packages/                 你自己的插件（luci-app-hello 是模板，照抄改名）
-├─ scripts/
-│  ├─ render-files.sh        把 device.conf 填进 files/ 模板
-│  └─ rename-apps.sh         编译前按 apps.tsv 改菜单标题
-├─ feeds.conf                额外 feed（iStore 商店等）
-├─ build.sh                  一键编译
-└─ .github/workflows/build.yml   GitHub 云端自动编译
-```
-
-## 三步出固件（推荐：GitHub 云端编译，你自己的电脑不用装 Linux）
+## 三步出固件（推荐：GitHub 云端编译）
 
 1. **改 `device.conf`**（密码留空就是空密码）。想预装软件就编辑 `configs/packages.list`。
 2. **把这个目录推到你自己的 GitHub 仓库**（私有仓库也行）：
@@ -62,28 +18,6 @@ istoreos-fw/
 > 免费额度：公开仓库 Actions 不扣分钟数；私有仓库每月 2000 分钟，够编译 2~3 次。
 > 想省时间：源码和 `dl` 目录已被缓存，第二次编译会快很多。
 
-### 本地编译（有 WSL / Ubuntu 才用）
-
-```bash
-sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
-  gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget
-bash build.sh          # 产物在 .src/istoreos/bin/targets/x86/64/
-```
-
-## 刷机与首启会发生什么
-
-1. Etcher 把 `*.img.gz` 写进 U 盘 → 机器从 U 盘启动 → 按上一篇指南把它 dd 到内置 SSD。
-2. **首次启动**按顺序自动执行七个脚本（各执行一次，成功即自删）：
-   - `10-brand`：主机名 = `DEVICE_NAME`，时区 +8，LuCI 中文，登录横幅 = 品牌名 + **编译者签名 + 编译日期**
-   - `11-theme`：按 `THEME` 启用 kucat / argon 主题（主题没装上就自动跳过，不会白屏）
-   - `20-net-autodetect`：探测物理网口数量 → 生成 WAN/LAN、DHCP、防火墙
-   - `21-bandwidth`：`HOME_BANDWIDTH>=500` 时自动开启软件流卸载（N100 跑千兆很轻松）
-   - `30-ssd-extend`：仅在 `EXTEND_ROOTFS=1` 时动分区，会重启一次
-   - `40-root-nopasswd`：`ROOT_PASSWORD` 为空 → root 无密码；有值 → 设成该密码
-   - `50-openclash-core`：给 OpenClash 自动下载 Meta(mihomo) 核心，失败下次启动重试
-3. 浏览器开 **http://192.168.6.1**，密码留空直接进。
-4. 想确认网口探测结果：SSH 或 LuCI 终端里 `cat /etc/portmap.txt`，日志在 `/etc/.net-autodetect.log`。
-
 ### 网口分配规则（`MODE=router` 时）
 
 | 探测到的物理口数 | 结果 |
@@ -93,21 +27,6 @@ bash build.sh          # 产物在 .src/istoreos/bin/targets/x86/64/
 | 0 个 | 不动配置，保留镜像默认（说明网卡驱动没覆盖，见下方「排错」） |
 
 想自己指定口，把 `PORT_POLICY` 改成 `manual`，再填 `MANUAL_WAN_PORT` / `MANUAL_LAN_PORTS`。
-
-## 存储说明（SSD）
-
-- 镜像分区由 `device.conf` 决定：**内核 128MB / 系统 2048MB**。
-  系统分区就是 overlay（装软件/Docker 的空间），开箱约 2GB 可用，不需要在机器上动分区表。
-- 想一次吃满整块 SSD：把 `ROOTFS_SIZE_MB` 改成 SSD 容量（如 `60000`）**或**
-  设 `EXTEND_ROOTFS="1"` 让首启自动扩分区。
-  - 前者镜像文件会变大（dd 更慢，gz 下载体积增加不多），但完全可控。
-  - 后者不动镜像体积，首启自动 `parted resizepart` + 重启，属于进阶功能，建议先在备用盘上验证。
-- 扩容失败的补救（LuCI 终端里执行，把 `nvme0n1` 换成你的盘）：
-  ```sh
-  parted -s /dev/nvme0n1 resizepart 2 100%
-  reboot
-  # 重启后确认：df -h /overlay
-  ```
 
 ## 预装插件清单（本次加入的 8 个）
 
@@ -157,9 +76,3 @@ bash build.sh          # 产物在 .src/istoreos/bin/targets/x86/64/
 - **开启流卸载后部分功能异常**（如某些加速/游戏 NAT 类型）：LuCI → 防火墙里关掉
   「流量分载/硬件流卸载」，或把 `HW_OFFLOAD` 改回 `0` 重编。
 
-## 已知限制（说实话）
-
-- `30-ssd-extend` 的自动扩容走的是 `parted resizepart` + 重启，**没有在你的机器上实测过**，
-  建议先用 `ROOTFS_SIZE_MB` 方案；开这个开关前确认盘里没有要留的数据。
-- 空密码是「纯内网自用」的取舍，不要把管理端口映射到公网。
-- 改名只覆盖 LuCI 菜单标题；软件包列表里的「包名/描述」来自包自身，不在本框架范围内。
