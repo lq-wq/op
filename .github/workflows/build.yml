@@ -20,12 +20,14 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
 
     steps:
       - name: 拉取框架仓库
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: 安装编译依赖
         run: |
@@ -53,13 +55,24 @@ jobs:
           JOBS: 4
 
       - name: 收集产物
+        if: success()
         run: |
           mkdir -p out
           cp -v .src/istoreos/bin/targets/x86/64/*.img.gz out/ 2>/dev/null || true
           cp -v .src/istoreos/bin/targets/x86/64/sha256sums out/ 2>/dev/null || true
           ls -lh out
 
+      - name: 上传构建日志（成功失败都上传，便于排查）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: build.log
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: 上传固件
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ github.run_number }}
