@@ -47,20 +47,23 @@ luci-theme-argon
 luci-app-store
 luci-i18n-store-zh-cn
 
-# 应用过滤（oaf 对新内核兼容性一般，编译失败就注释掉这两行）
-luci-app-oaf
-luci-i18n-oaf-zh-cn
+# 应用过滤 oaf：新内核兼容差 + Go 编译体积大。
+# 因 GitHub 免费 runner 磁盘有限，已移出云编译；首次启动后可在 iStore 应用商店里安装。
+# luci-app-oaf
+# luci-i18n-oaf-zh-cn
 
-# Docker 管理（体积大、首次编译慢，不需要就整段注释）
-luci-app-dockerman
-luci-i18n-dockerman-zh-cn
-docker
-dockerd
+# Docker 管理：dockerd(Go) 编译体积巨大，免费 runner 放不下，已移出云编译。
+# 路由器首次启动后，直接在 iStore 应用商店搜索 “Docker / Dockerman” 一键安装（走路由器自己的 SSD）。
+# luci-app-dockerman
+# luci-i18n-dockerman-zh-cn
+# docker
+# dockerd
 
-# AdGuardHome（kenzok8 feed，核心随包编译，开箱即用）
-luci-app-adguardhome
-luci-i18n-adguardhome-zh-cn
-adguardhome
+# AdGuardHome：Go 编译体积大，免费 runner 放不下，已移出云编译。
+# 首次启动后在 iStore 应用商店安装 “AdGuard Home” 即可（核心由商店下载，无需编译）。
+# luci-app-adguardhome
+# luci-i18n-adguardhome-zh-cn
+# adguardhome
 
 # OpenClash（核心由首启脚本 50-openclash-core 自动下载）
 luci-app-openclash
