@@ -10,17 +10,31 @@
 set -Eeuo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
-[ -f "$ROOT/device.conf" ] || { echo "请在仓库根目录运行"; exit 1; }
-. "$ROOT/device.conf"
 
-# ---------- 日志：控制台 + build.log 双写 ----------
+# ---------- 先建日志：确保在任何后续失败（含 device.conf 解析错误）前就开始记录 ----------
 LOG="$ROOT/build.log"
-: > "$LOG"
-exec > >(tee -a "$LOG") 2>&1
+touch "$LOG" 2>/dev/null || true
+# 把后续所有输出同时写进 build.log；即便重定向本身失败也不影响终端输出
+exec > >(tee -a "$LOG") 2>&1 || true
+echo "[$(date '+%F %T')] 构建脚本启动，日志文件：$LOG"
+
+# ---------- 环境自检（磁盘/内存），方便判断是不是撑爆磁盘 ----------
+echo "== 环境自检 =="
+df -h / 2>/dev/null | sed 's/^/  /' || true
+free -h 2>/dev/null | sed 's/^/  /' || true
+nproc 2>/dev/null | sed 's/^/  CPU 核数: /' || true
+AVAIL_GB=$(df -BG / 2>/dev/null | awk 'NR==2{gsub("G","",$4); print $4}')
+if [ -n "$AVAIL_GB" ] && [ "$AVAIL_GB" -lt 8 ] 2>/dev/null; then
+	echo "  [警告] 剩余磁盘仅 ${AVAIL_GB}GB，iStoreOS 全量构建（含 docker/adguardhome）极易撑爆磁盘。"
+	echo "         若构建中途失败且日志出现 'No space left on device'，请删掉 docker/dockerd/adguardhome 重试。"
+fi
 
 # ---------- 出错时提示 ----------
 trap 'echo "!! 构建在脚本第 $LINENO 行失败，详见上面的输出与 build.log"' ERR
 trap 'echo "------------------------------------------------" ; echo "build.log 路径：$LOG"' EXIT
+
+[ -f "$ROOT/device.conf" ] || { echo "缺少 device.conf，请在仓库根目录运行"; exit 1; }
+. "$ROOT/device.conf"
 
 BRANCH="${BRANCH:-openwrt-25.12}"
 REPO="${REPO:-https://github.com/istoreos/istoreos.git}"
