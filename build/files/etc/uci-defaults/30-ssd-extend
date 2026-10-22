@@ -1,0 +1,80 @@
+#!/bin/sh
+# ============================================================
+#  30-ssd-extend —— SSD 空间处理（可选功能，默认关闭）
+#
+#  默认方案：镜像构建时就把根分区做成 ROOTFS_SIZE_MB（默认 4GB），
+#            首启即可用，不动机器上的分区表，最稳。
+#
+#  打开 EXTEND_ROOTFS="1" 后：首启自动把根分区扩到整块 SSD。
+#            会重启一次，属于可选进阶功能，请先确认数据可丢。
+# ============================================================
+
+. /etc/device-profile
+[ "$EXTEND_ROOTFS" = "1" ] || exit 0
+
+LOG=/etc/.ssd-extend.log
+log() { echo "$(date '+%F %T') $*" >>"$LOG"; }
+
+command -v parted >/dev/null 2>&1 || { log "parted 未安装，跳过扩容"; exit 0; }
+
+# ---------- 定位根分区所在磁盘 ----------
+mm="$(awk '$5=="/" && $9=="/dev/root"{print $3}' /proc/self/mountinfo | head -n1)"
+[ -z "$mm" ] && mm="$(awk '$5=="/"{print $3}' /proc/self/mountinfo | head -n1)"
+[ -z "$mm" ] && { log "无法定位根设备"; exit 0; }
+
+blk="$(readlink -f "/sys/dev/block/$mm")"
+disk="/dev/$(basename "$(dirname "$blk")")"
+part="${blk##*[!0-9]}"
+
+disksize=$(cat "/sys/block/$(basename "$disk")/size" 2>/dev/null)
+partsize=$(cat "/sys/class/block/$(basename "$blk")/size" 2>/dev/null)
+if [ -z "$disksize" ] || [ -z "$partsize" ]; then
+	log "读取磁盘大小失败"
+	exit 0
+fi
+
+# 剩余不足 1GB 就不用折腾了
+free_mb=$(( (disksize - partsize) * 512 / 1024 / 1024 ))
+log "disk=$disk part=$part free=${free_mb}MB"
+[ "$free_mb" -lt 1024 ] && { log "无需扩容（剩余 <1GB）"; exit 0; }
+
+# ---------- 阶段 1：扩分区表 ----------
+if [ ! -e /etc/.ssd-part.done ]; then
+	log "stage1: parted resizepart $part 100%"
+	if parted -s "$disk" resizepart "$part" 100% >>"$LOG" 2>&1; then
+		touch /etc/.ssd-part.done
+		log "stage1 ok, rebooting"
+		sync
+		reboot
+		exit 1
+	else
+		log "stage1 failed（若是 GPT 提示需要 fix，请按 README 手动处理）"
+		exit 1
+	fi
+fi
+
+# ---------- 阶段 2：扩文件系统 ----------
+if [ -e /etc/.ssd-part.done ] && [ ! -e /etc/.ssd-fs.done ]; then
+	ovl="$(awk '$5=="/overlay"{print $9}' /proc/self/mountinfo | head -n1)"
+	fstype="$(awk '$2=="/overlay"{print $3}' /proc/mounts | head -n1)"
+	log "stage2: overlay=$ovl fstype=$fstype"
+
+	case "$fstype" in
+		ext4|ext3|ext2)
+			command -v resize2fs >/dev/null 2>&1 && resize2fs -f "$ovl" >>"$LOG" 2>&1
+			;;
+		f2fs)
+			command -v resize.f2fs >/dev/null 2>&1 && resize.f2fs "$ovl" >>"$LOG" 2>&1
+			;;
+		*)
+			log "未知 overlay 类型，交给 fstools 处理（重启后应自动扩）"
+			;;
+	esac
+
+	touch /etc/.ssd-fs.done
+	sync
+	reboot
+	exit 1
+fi
+
+exit 0

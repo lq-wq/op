@@ -1,0 +1,176 @@
+#!/bin/sh
+# ============================================================
+#  20-net-autodetect —— 网口自动识别 + 按角色生成网络配置
+#    · auto  ：探测物理网口数量，自动决定 WAN/LAN 划分
+#    · manual：按 device.conf 的固定网口名划分
+#  只在首次启动执行一次。之后你在 LuCI 里改的配置不会被覆盖。
+# ============================================================
+
+. /etc/device-profile
+
+LOG=/etc/.net-autodetect.log
+log() { echo "$(date '+%F %T') $*" >>"$LOG"; }
+
+# ---------- 1. 枚举物理以太网口 ----------
+# 判据：有 /sys/class/net/<dev>/device（真实 PCI/USB 设备）
+#       且 type=1（以太网），排除虚拟接口
+list_ports() {
+	for d in /sys/class/net/*; do
+		n="${d##*/}"
+		case "$n" in
+			lo|br-*|bond*|docker*|veth*|ifb*|tun*|tap*|wg*|ppp*|sit*|ip6*|.*) continue ;;
+		esac
+		[ -e "$d/device" ] || continue
+		[ "$(cat "$d/type" 2>/dev/null)" = "1" ] || continue
+		pci="$(readlink -f "$d/device" 2>/dev/null)"
+		pci="${pci##*/}"
+		echo "$pci $n"
+	done | sort | awk '{print $2}'
+}
+
+PORTS="$(list_ports)"
+PORT_NUM=$(echo "$PORTS" | grep -c . )
+log "detected $PORT_NUM port(s): $(echo $PORTS)"
+
+# 一个口都没探测到：说明驱动缺失或用了非常规网卡，保持默认配置不动
+if [ "$PORT_NUM" -eq 0 ]; then
+	log "no physical port detected, keep default config"
+	exit 0
+fi
+
+# ---------- 2. 决定 WAN / LAN 划分 ----------
+if [ "$PORT_POLICY" = "manual" ]; then
+	WAN_PORT="$MANUAL_WAN_PORT"
+	LAN_PORTS="$MANUAL_LAN_PORTS"
+	log "manual policy: wan=$WAN_PORT lan=$LAN_PORTS"
+else
+	case "$MODE" in
+		bypass)
+			# 旁路由：所有口都归 LAN，只用第一个口接主路由
+			WAN_PORT=""
+			LAN_PORTS="$PORTS"
+			;;
+		*)
+			# 主路由：第一口 WAN，其余 LAN；只有一个口时退化为单臂旁路由
+			WAN_PORT=$(echo "$PORTS" | head -n1)
+			LAN_PORTS=$(echo "$PORTS" | tail -n +2 | tr '\n' ' ')
+			[ -z "$(echo $LAN_PORTS)" ] && {
+				log "only 1 port, fallback to bypass-like single-arm mode"
+				MODE="bypass"
+			}
+			;;
+	esac
+	log "auto policy: mode=$MODE wan=$WAN_PORT lan=$LAN_PORTS"
+fi
+
+# ---------- 3. 写 network ----------
+# 清掉原有 lan/wan/wan6 与桥设备，避免和镜像默认值打架
+for s in lan wan wan6; do uci -q delete network.$s; done
+uci -q delete network.brlan
+uci -q delete network.lan_dev
+
+# --- LAN 桥 ---
+uci set network.brlan=device
+uci set network.brlan.name='br-lan'
+uci set network.brlan.type='bridge'
+for p in $LAN_PORTS; do uci add_list network.brlan.ports="$p"; done
+
+uci set network.lan=interface
+uci set network.lan.device='br-lan'
+uci set network.lan.proto='static'
+uci set network.lan.ipaddr="$LAN_IP"
+uci set network.lan.netmask="$LAN_NETMASK"
+uci set network.lan.delegate='0'
+if [ "$MODE" = "bypass" ]; then
+	# 旁路由不跑 IPv6 RA/DHCP，避免和主路由抢
+	uci set network.lan.ip6assign=''
+fi
+
+# --- WAN ---
+if [ "$MODE" != "bypass" ] && [ -n "$WAN_PORT" ]; then
+	uci set network.wan=interface
+	uci set network.wan.device="$WAN_PORT"
+	case "$WAN_PROTO" in
+		pppoe)
+			uci set network.wan.proto='pppoe'
+			uci set network.wan.username="$PPPOE_USER"
+			uci set network.wan.password="$PPPOE_PASS"
+			uci set network.wan.ipv6='0'
+			;;
+		static)
+			uci set network.wan.proto='static'
+			;;
+		*)
+			uci set network.wan.proto='dhcp'
+			;;
+	esac
+	uci -q set network.wan.metric='10'
+fi
+uci commit network
+
+# ---------- 4. 写 dhcp ----------
+uci -q set dhcp.lan.interface='lan'
+uci -q set dhcp.lan.start='100'
+uci -q set dhcp.lan.limit='100'
+uci -q set dhcp.lan.leasetime="$LAN_DHCP_LEASE"
+uci -q set dhcp.lan.force='0'
+
+# 用 device.conf 的地址段计算 start/limit
+case "$LAN_IP" in
+	*.*.*.*)
+		prefix="${LAN_IP%.*}"
+		start="${LAN_DHCP_START##*.}"
+		end="${LAN_DHCP_END##*.}"
+		limit=$((end - start + 1))
+		[ "$limit" -gt 0 ] && {
+			uci -q set dhcp.lan.start="$start"
+			uci -q set dhcp.lan.limit="$limit"
+		}
+		;;
+esac
+
+if [ "$MODE" = "bypass" ]; then
+	# 旁路由关 DHCP，这是最关键的一步
+	uci -q set dhcp.lan.ignore='1'
+	uci -q set dhcp.lan.ra='disabled'
+	uci -q set dhcp.lan.dhcpv6='disabled'
+	uci -q set dhcp.lan.ndp='disabled'
+else
+	uci -q set dhcp.lan.ignore='0'
+	uci -q set dhcp.lan.ra='disabled'
+	uci -q set dhcp.lan.dhcpv6='disabled'
+	uci -q delete dhcp.wan 2>/dev/null
+	uci -q set dhcp.wan=dhcp
+	uci -q set dhcp.wan.interface='wan'
+	uci -q set dhcp.wan.ignore='1'
+fi
+uci commit dhcp
+
+# ---------- 5. 写 firewall ----------
+# LAN -> 任意 允许转发；旁路由必须开 Masquerade，否则回程不通
+uci -q set firewall.@zone[0].name='lan'
+uci -q set firewall.@zone[0].input='ACCEPT'
+uci -q set firewall.@zone[0].output='ACCEPT'
+uci -q set firewall.@zone[0].forward='ACCEPT'
+uci -q set firewall.@zone[0].masq='1'
+uci -q set firewall.@zone[0].mtu_fix='1'
+if [ "$MODE" != "bypass" ]; then
+	uci -q set firewall.@zone[1].name='wan'
+	uci -q set firewall.@zone[1].input='REJECT'
+	uci -q set firewall.@zone[1].output='ACCEPT'
+	uci -q set firewall.@zone[1].forward='REJECT'
+	uci -q set firewall.@zone[1].masq='1'
+	uci -q set firewall.@zone[1].mtu_fix='1'
+	uci -q set firewall.@zone[1].network='wan'
+fi
+uci commit firewall
+
+cat > /etc/portmap.txt <<EOF
+mode=$MODE
+wan=$WAN_PORT
+lan=$LAN_PORTS
+ports=$PORTS
+EOF
+
+log "done: mode=$MODE wan=$WAN_PORT lan=$LAN_PORTS"
+exit 0

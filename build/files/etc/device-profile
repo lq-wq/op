@@ -1,0 +1,39 @@
+# ============================================================
+#  /etc/device-profile —— 由 device.conf 在编译时生成，运行时只读
+#  设备内的所有自愈脚本都 source 这个文件，不要在设备上手改
+#  （手改会被下次刷机覆盖；要改就改仓库里的 device.conf 重新编译）
+# ============================================================
+DEVICE_NAME="istoreos-gw"
+BRAND_NAME="N100-Router"
+BRAND_VERSION="1.1"
+BRAND_VENDOR="my.lan"
+BUILDER_NAME="ny"
+BUILD_DATE="2026-10-22 13:55"
+THEME="kucat"
+
+LAN_IP="192.168.6.1"
+LAN_NETMASK="255.255.255.0"
+LAN_DHCP_START="192.168.6.100"
+LAN_DHCP_END="192.168.6.200"
+LAN_DHCP_LEASE="12h"
+
+ROOT_PASSWORD=""
+
+MODE="router"
+WAN_PROTO="dhcp"
+PPPOE_USER=""
+PPPOE_PASS=""
+
+PORT_POLICY="auto"
+MANUAL_WAN_PORT="eth0"
+MANUAL_LAN_PORTS="eth1 eth2 eth3"
+
+HOME_BANDWIDTH="1000"
+HW_OFFLOAD="0"
+
+EXTEND_ROOTFS="0"
+
+TIMEZONE="CST-8"
+ZONENAME="Asia/Shanghai"
+LANG_CODE="zh_cn"
+NTP_SERVER="ntp.aliyun.com"

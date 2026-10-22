@@ -1,0 +1,32 @@
+#!/bin/sh
+# ============================================================
+#  50-openclash-core —— 给 OpenClash 预置 Meta(mihomo) 核心
+#   · 有网就下载，装到 /etc/openclash/core/clash_meta
+#   · 没网/下载失败：exit 1，下次启动自动重试（脚本不会被删）
+#   · 装好核心后 OpenClash 插件里直接选 Meta 内核即可用
+# ============================================================
+
+CORE_DIR=/etc/openclash/core
+CORE="$CORE_DIR/clash_meta"
+
+[ -s "$CORE" ] && exit 0
+command -v curl >/dev/null 2>&1 || exit 1
+
+LOG=/etc/.openclash-core.log
+url="https://github.com/MetaCubeX/mihomo/releases/latest/download/mihomo-linux-amd64.gz"
+tmp=/tmp/mihomo.gz
+
+echo "$(date '+%F %T') downloading core..." >>"$LOG"
+mkdir -p "$CORE_DIR"
+if curl -fsSL --connect-timeout 15 --max-time 300 -o "$tmp" "$url" \
+   && gunzip -c "$tmp" > "$CORE" \
+   && head -c 4 "$CORE" | grep -q ELF; then
+	chmod 755 "$CORE"
+	echo "$(date '+%F %T') core installed: $(du -k "$CORE" | cut -f1)KB" >>"$LOG"
+	rm -f "$tmp"
+	exit 0
+fi
+
+echo "$(date '+%F %T') failed; retry next boot" >>"$LOG"
+rm -f "$tmp" "$CORE"
+exit 1

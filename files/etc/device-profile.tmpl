@@ -1,0 +1,39 @@
+# ============================================================
+#  /etc/device-profile —— 由 device.conf 在编译时生成，运行时只读
+#  设备内的所有自愈脚本都 source 这个文件，不要在设备上手改
+#  （手改会被下次刷机覆盖；要改就改仓库里的 device.conf 重新编译）
+# ============================================================
+DEVICE_NAME="@DEVICE_NAME@"
+BRAND_NAME="@BRAND_NAME@"
+BRAND_VERSION="@BRAND_VERSION@"
+BRAND_VENDOR="@BRAND_VENDOR@"
+BUILDER_NAME="@BUILDER_NAME@"
+BUILD_DATE="@BUILD_DATE@"
+THEME="@THEME@"
+
+LAN_IP="@LAN_IP@"
+LAN_NETMASK="@LAN_NETMASK@"
+LAN_DHCP_START="@LAN_DHCP_START@"
+LAN_DHCP_END="@LAN_DHCP_END@"
+LAN_DHCP_LEASE="@LAN_DHCP_LEASE@"
+
+ROOT_PASSWORD="@ROOT_PASSWORD@"
+
+MODE="@MODE@"
+WAN_PROTO="@WAN_PROTO@"
+PPPOE_USER="@PPPOE_USER@"
+PPPOE_PASS="@PPPOE_PASS@"
+
+PORT_POLICY="@PORT_POLICY@"
+MANUAL_WAN_PORT="@MANUAL_WAN_PORT@"
+MANUAL_LAN_PORTS="@MANUAL_LAN_PORTS@"
+
+HOME_BANDWIDTH="@HOME_BANDWIDTH@"
+HW_OFFLOAD="@HW_OFFLOAD@"
+
+EXTEND_ROOTFS="@EXTEND_ROOTFS@"
+
+TIMEZONE="@TIMEZONE@"
+ZONENAME="@ZONENAME@"
+LANG_CODE="@LANG_CODE@"
+NTP_SERVER="@NTP_SERVER@"
