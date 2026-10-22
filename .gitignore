@@ -1,0 +1,8 @@
+# 编译产物，别提交
+build/
+.src/
+out/
+*.img.gz
+*.bin
+.config
+.config.old
