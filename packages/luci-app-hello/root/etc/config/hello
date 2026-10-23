@@ -1,3 +1,0 @@
-config hello 'main'
-	option message '你好，路由器'
-	option enabled '1'
