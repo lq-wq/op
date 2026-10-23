@@ -1,12 +1,10 @@
 # =============================================================================
 # openwrt-25.12 分支 feeds 配置
-#
 # 基础部分与 istoreos/istoreos 仓库 openwrt-25.12 分支的 feeds.conf.default
 # 一致（纯上游 OpenWrt 25.12；此处使用 GitHub 镜像，国内访问更快）：
 #   - packages / luci
 #   - routing / telephony / video 本项目未用到，已精简去除
 # 新增部分：argon 主题、AppFilter、MOMO、OpenClash、iStore 商店
-#
 # 官方 feed 已可直接提供：adguardhome + luci-app-adguardhome、
 # docker/dockerd/containerd/runc/docker-compose、sing-box、ttyd 等。
 # luci-app-dockerman 不在官方 luci feed 中，由本项目 packages/ 内置提供。
