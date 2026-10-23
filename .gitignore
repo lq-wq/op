@@ -1,0 +1,11 @@
+# 构建产物（不纳入仓库）
+openwrt/
+build/
+bin/
+dl/
+artifact/
+output/
+
+# 临时文件
+*.log
+.research/tmp/
