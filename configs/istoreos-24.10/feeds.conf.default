@@ -1,6 +1,5 @@
 # =============================================================================
 # iStoreOS 24.10 分支 feeds 配置
-#
 # 基础部分与 iStoreOS 官方构建保持一致：
 #   - feeds.conf.default（istoreos-24.10 分支自带）
 #   - 官方构建附加 feeds（fw.koolcenter.com 官方 config.seed 同款）
