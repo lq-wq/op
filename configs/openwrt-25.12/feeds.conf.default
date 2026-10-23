@@ -1,0 +1,29 @@
+# =============================================================================
+# openwrt-25.12 分支 feeds 配置
+#
+# 基础部分与 istoreos/istoreos 仓库 openwrt-25.12 分支的 feeds.conf.default
+# 一致（纯上游 OpenWrt 25.12；此处使用 GitHub 镜像，国内访问更快）：
+#   - packages / luci
+#   - routing / telephony / video 本项目未用到，已精简去除
+# 新增部分：argon 主题、AppFilter、MOMO、OpenClash、iStore 商店
+#
+# 官方 feed 已可直接提供：adguardhome + luci-app-adguardhome、
+# docker/dockerd/containerd/runc/docker-compose、sing-box、ttyd 等。
+# luci-app-dockerman 不在官方 luci feed 中，由本项目 packages/ 内置提供。
+# =============================================================================
+
+# ---- 上游 OpenWrt feeds（openwrt-25.12，GitHub 镜像）----------------------------
+src-git packages https://github.com/openwrt/packages.git;openwrt-25.12
+src-git luci https://github.com/openwrt/luci.git;openwrt-25.12
+
+# ---- 本项目新增 -------------------------------------------------------------------
+# argon 主题 + argon-config（含 git 子模块，scripts/feeds 会自动递归初始化）
+src-git third https://github.com/jjm2473/openwrt-third.git;main
+# AppFilter 应用过滤（包名为 luci-app-oaf）
+src-git oaf https://github.com/jjm2473/OpenAppFilter.git;dev7
+# MOMO（sing-box 图形界面）
+src-git momo https://github.com/nikkinikki-org/OpenWrt-momo.git;main
+# OpenClash
+src-git openclash https://github.com/vernesong/OpenClash.git;master
+# iStore 应用商店
+src-git store https://github.com/linkease/istore.git;main

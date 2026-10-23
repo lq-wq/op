@@ -1,0 +1,36 @@
+#!/bin/sh
+# =============================================================================
+# OpenWrt 定制固件 - 首次启动自定义设置
+#
+# 执行时机：镜像首次启动时（preinit 生成默认配置之后、boot 阶段自动执行），
+#           执行成功后由系统自动删除，重启不会重复运行。
+#
+# 功能：
+#   1) 兜底确保 LAN 管理地址为 192.168.6.1
+#      （镜像构建阶段已通过 CONFIG_TARGET_DEFAULT_LAN_IP_FROM_PREINIT +
+#       CONFIG_TARGET_PREINIT_IP="192.168.6.1" 将默认 LAN IP 写入 board.d，
+#       此处再做一次兜底，防止个别平台 board.d 机制未生效）
+#   2) 清空 root 密码，实现后台/SSH 空密码直接登录
+# =============================================================================
+
+# --- 1) LAN IP 兜底 ---------------------------------------------------------
+# 仅当 network.lan 节点已存在时设置，避免在配置未生成时创建残缺节点
+if [ -n "$(uci -q get network.lan)" ]; then
+	uci set network.lan.ipaddr='192.168.6.1'
+	uci set network.lan.gateway='192.168.6.1'
+	uci commit network
+fi
+
+# --- 2) root 空密码 ----------------------------------------------------------
+# 删除密码哈希：LuCI 登录留空即可进入，SSH root 亦无需密码
+passwd -d root 2>/dev/null
+
+# --- 3) 设置系统时区为上海（可选，iStoreOS 风格）-----------------------------
+# 若 /etc/config/system 已存在则设置时区
+if [ -f /etc/config/system ]; then
+	uci set system.@system[0].zonename='Asia/Shanghai'
+	uci set system.@system[0].timezone='CST-8'
+	uci commit system
+fi
+
+exit 0
