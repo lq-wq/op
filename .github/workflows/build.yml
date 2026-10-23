@@ -64,6 +64,14 @@ jobs:
         run: |
           cd openwrt
           cp $GITHUB_WORKSPACE/$CONFIG_DIR/feeds.conf.default feeds.conf.default
+          # 清洗1：删除孤立的 "#" 行
+          # （官方 scripts/feeds 的注释剥离正则 s/#.+$/ 要求 # 后还有字符，
+          #   单独的 # 行会漏剥并被判定为语法错误 "Syntax error in feeds.conf.default"）
+          sed -i '/^[[:space:]]*#[[:space:]]*$/d' feeds.conf.default
+          # 清洗2：统一为 LF 行尾（CRLF 会让剥离后残留的 \r 触发语法错误）
+          sed -i 's/\r$//' feeds.conf.default
+          # 清洗3：去除文件头 BOM
+          sed -i '1s/^\xEF\xBB\xBF//' feeds.conf.default
           cat feeds.conf.default
 
       - name: 更新并安装 feeds
