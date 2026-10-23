@@ -1,82 +1,185 @@
-name: build-firmware
+name: Build OpenWrt Firmware
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - 'device.conf'
-      - 'configs/**'
-      - 'files/**'
-      - 'scripts/**'
-      - 'brand/**'
-      - 'packages/**'
-      - 'feeds.conf'
-      - 'build.sh'
-      - '.github/workflows/build.yml'
+    inputs:
+      branch:
+        description: '选择编译分支'
+        required: true
+        default: 'openwrt-25.12'
+        type: choice
+        options:
+          - openwrt-25.12
+          - istoreos-24.10
+      ssh:
+        description: '启用 SSH 调试（连接时长 30 分钟）'
+        required: false
+        default: false
+        type: boolean
+      upload_release:
+        description: '编译完成后上传固件到 Release'
+        required: false
+        default: false
+        type: boolean
 
-concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: write
+  actions: read
+
+env:
+  REPO_URL: https://github.com/istoreos/istoreos
+  REPO_BRANCH: ${{ github.event.inputs.branch }}
+  CONFIG_DIR: configs/${{ github.event.inputs.branch }}
+  DIY_PART1: diy-part1.sh
+  DIY_PART2: diy-part2.sh
+  TZ: Asia/Shanghai
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    if: github.event.repository.owner.id == github.event.sender.id
 
     steps:
-      - name: 拉取框架仓库
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+      - name: 检出仓库代码
+        uses: actions/checkout@main
 
-      - name: 安装编译依赖
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential clang flex bison g++ gawk \
-            gcc-multilib g++-multilib gettext git libncurses5-dev \
-            libssl-dev python3-distutils rsync unzip zlib1g-dev \
-            file wget subversion time
-
-      # 关键：GitHub 免费 runner 磁盘只有约 14GB，OpenWrt 全量构建必爆盘。
-      # 删掉 runner 预装但用不到的大目录，可腾出 10GB+ 空间。
-      - name: 释放磁盘空间
-        run: |
-          sudo rm -rf /usr/share/dotnet /opt/hostedtoolcache \
-            /usr/local/.ghcup /usr/local/share/powershell \
-            /usr/local/lib/android /usr/local/lib/node_modules \
-            "$AGENT_TOOLSDIRECTORY" /opt/ghc 2>/dev/null || true
-          echo "== 释放后磁盘 =="
-          df -h / | sed 's/^/  /'
-
-      - name: 编译
-        run: bash build.sh
+      - name: 初始化编译环境
         env:
-          JOBS: 4
-
-      - name: 收集产物
-        if: success()
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          mkdir -p out
-          cp -v .src/istoreos/bin/targets/x86/64/*.img.gz out/ 2>/dev/null || true
-          cp -v .src/istoreos/bin/targets/x86/64/sha256sums out/ 2>/dev/null || true
-          ls -lh out
+          sudo -E apt-get update -y
+          sudo -E apt-get install -y build-essential clang flex bison g++ gawk \
+            gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev \
+            libelf-dev python3-setuptools python3-pyelftools rsync swig unzip \
+            zlib1g-dev file wget xz-utils patch pigz dosfstools mtools \
+            qemu-utils p7zip-full xxd uglifyjs autoconf automake libtool
 
-      - name: 上传构建日志（成功失败都上传，便于排查）
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
+      - name: 克隆 iStoreOS 源码
+        run: |
+          git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
+          cd openwrt
+          echo "源码分支: $(git branch --show-current)"
+
+      - name: 加载自定义 feeds
+        run: |
+          cd openwrt
+          cp $GITHUB_WORKSPACE/$CONFIG_DIR/feeds.conf.default feeds.conf.default
+          cat feeds.conf.default
+
+      - name: 更新并安装 feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 运行 diy-part1.sh（添加插件源码）
+        env:
+          BRANCH: ${{ github.event.inputs.branch }}
+        run: |
+          chmod +x $GITHUB_WORKSPACE/$DIY_PART1
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_PART1
+
+      - name: 复制自定义文件（files/）
+        run: |
+          cd openwrt
+          cp -rf $GITHUB_WORKSPACE/files/. .
+
+      - name: 加载 .config 配置文件
+        run: |
+          cd openwrt
+          cp $GITHUB_WORKSPACE/$CONFIG_DIR/.config .config
+          make defconfig
+
+      - name: 运行 diy-part2.sh（系统定制）
+        run: |
+          chmod +x $GITHUB_WORKSPACE/$DIY_PART2
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_PART2
+
+      - name: SSH 调试（可选）
+        if: ${{ github.event.inputs.ssh == 'true' }}
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 30
+
+      - name: 下载源代码（dl）
+        run: |
+          cd openwrt
+          make download -j$(nproc)
+          find dl -size -1024c -exec ls -l {} \; 2>/dev/null | head -20
+          find dl -size -1024c -exec rm -f {} \; 2>/dev/null
+
+      - name: 编译固件
+        run: |
+          cd openwrt
+          make -j$(nproc) V=sc || make -j1 V=s
+
+      - name: 整理固件输出并生成编译信息
+        run: |
+          cd openwrt
+          mkdir -p $GITHUB_WORKSPACE/artifact
+
+          TARGET_DIR="bin/targets/x86/64"
+          for pattern in \
+            "*squashfs-combined-efi.img.gz" \
+            "*squashfs-combined-efi.vmdk" \
+            "*squashfs-combined.img.gz" \
+            "*squashfs-combined.vmdk" \
+            "*.manifest"; do
+            find "$TARGET_DIR" -maxdepth 1 -type f -name "$pattern" \
+              -exec cp {} $GITHUB_WORKSPACE/artifact/ \; 2>/dev/null || true
+          done
+
+          # 生成编译信息
+          BUILD_INFO="$GITHUB_WORKSPACE/artifact/BUILD_INFO.md"
+          echo "# OpenWrt 定制固件编译信息" > $BUILD_INFO
+          echo "" >> $BUILD_INFO
+          echo "## 基本信息" >> $BUILD_INFO
+          echo "- **源码仓库**: $REPO_URL" >> $BUILD_INFO
+          echo "- **编译分支**: $REPO_BRANCH" >> $BUILD_INFO
+          echo "- **设备架构**: x86-64" >> $BUILD_INFO
+          if grep -q 'CONFIG_LINUX_6_12=y' .config 2>/dev/null; then
+            echo "- **内核版本**: 6.12" >> $BUILD_INFO
+          elif grep -q 'CONFIG_LINUX_6_6=y' .config 2>/dev/null; then
+            echo "- **内核版本**: 6.6" >> $BUILD_INFO
+          else
+            echo "- **内核版本**: 见 .config" >> $BUILD_INFO
+          fi
+          echo "- **管理地址**: 192.168.6.1（空密码）" >> $BUILD_INFO
+          echo "- **编译时间**: $(TZ=UTC-8 date '+%Y-%m-%d %H:%M:%S')" >> $BUILD_INFO
+          echo "" >> $BUILD_INFO
+          echo "## 分区大小" >> $BUILD_INFO
+          echo "- **内核分区**: $(grep 'CONFIG_TARGET_KERNEL_PARTSIZE=' .config 2>/dev/null | cut -d= -f2) MB" >> $BUILD_INFO
+          echo "- **系统分区**: $(grep 'CONFIG_TARGET_ROOTFS_PARTSIZE=' .config 2>/dev/null | cut -d= -f2) MB" >> $BUILD_INFO
+          echo "" >> $BUILD_INFO
+          echo "## 已编译的 LuCI 插件" >> $BUILD_INFO
+          grep 'CONFIG_PACKAGE_luci-app-' .config 2>/dev/null | grep '=y' | sed 's/CONFIG_PACKAGE_//;s/=y//' | sort | while read pkg; do echo "- $pkg" >> $BUILD_INFO; done
+          echo "" >> $BUILD_INFO
+          echo "## 已编译的主题" >> $BUILD_INFO
+          grep 'CONFIG_PACKAGE_luci-theme-' .config 2>/dev/null | grep '=y' | sed 's/CONFIG_PACKAGE_//;s/=y//' | sort | while read pkg; do echo "- $pkg" >> $BUILD_INFO; done
+          echo "" >> $BUILD_INFO
+          echo "=== 固件文件列表 ==="
+          ls -lh $GITHUB_WORKSPACE/artifact/ || echo "未找到固件文件"
+
+      - name: 上传固件到 Artifact
+        uses: actions/upload-artifact@main
         with:
-          name: build-log-${{ github.run_number }}
-          path: build.log
+          name: OpenWrt_${{ env.REPO_BRANCH }}
+          path: artifact/
           if-no-files-found: warn
-          retention-days: 30
 
-      - name: 上传固件
-        if: success()
-        uses: actions/upload-artifact@v4
+      - name: 上传到 Release
+        if: ${{ github.event.inputs.upload_release == 'true' }}
+        uses: softprops/action-gh-release@v2
         with:
-          name: firmware-${{ github.run_number }}
-          path: out/*
-          if-no-files-found: error
-          retention-days: 30
+          tag_name: OpenWrt_${{ env.REPO_BRANCH }}_${{ github.run_id }}
+          name: OpenWrt ${{ env.REPO_BRANCH }} 固件
+          body: |
+            管理地址：192.168.6.1（root 空密码）
+            源码分支：${{ env.REPO_BRANCH }}
+            分区：内核 64MB / 系统 2048MB
+            详细编译信息请查看 Artifact 中的 BUILD_INFO.md
+          files: artifact/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+          draft: false
+          prerelease: false
