@@ -33,6 +33,8 @@ env:
   DIY_PART1: diy-part1.sh
   DIY_PART2: diy-part2.sh
   TZ: Asia/Shanghai
+  # ccache 缓存目录（与下方缓存步骤的路径保持一致，位于 /mnt 大容量磁盘）
+  CCACHE_DIR: /mnt/workdir/.ccache
 
 jobs:
   build:
@@ -83,11 +85,22 @@ jobs:
           echo "源码分支: $(git branch --show-current)"
           df -hT "$PWD"
 
+      - name: 恢复工具链与编译缓存
+        uses: actions/cache/restore@v4
+        with:
+          # 缓存交叉工具链与 ccache（使用 /mnt 绝对路径，绕开源码树的软链接）
+          # 命中后可跳过工具链编译（约 1 小时）并大幅加速 C 包重编
+          path: |
+            /mnt/workdir/staging_dir/toolchain-*
+            /mnt/workdir/.ccache
+          key: toolchain-${{ env.REPO_BRANCH }}-${{ hashFiles(format('configs/{0}/.config', env.REPO_BRANCH)) }}
+          restore-keys: |
+            toolchain-${{ env.REPO_BRANCH }}-
+
       - name: 加载自定义 feeds
         run: |
           cd openwrt
-          cp $GITHUB_WORKSPACE/$CONFIG_DIR/feeds.conf.default feeds.conf.default
-          # 清洗1：删除孤立的 "#" 行
+          cp $GITHUB_WORKSPACE/$CONFIG_DIR/feeds.conf.default feeds.conf.default          # 清洗1：删除孤立的 "#" 行
           # （官方 scripts/feeds 的注释剥离正则 s/#.+$/ 要求 # 后还有字符，
           #   单独的 # 行会漏剥并被判定为语法错误 "Syntax error in feeds.conf.default"）
           sed -i '/^[[:space:]]*#[[:space:]]*$/d' feeds.conf.default
@@ -146,6 +159,17 @@ jobs:
           echo "=== 编译前磁盘占用 ==="
           df -hT / /mnt
           make -j$(nproc) V=sc || make -j1 V=s
+
+      - name: 保存工具链与编译缓存
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          # 即使编译失败/超时被取消也保存缓存：
+          # 下次运行可跳过工具链编译并命中 ccache，逐步收敛到 6 小时内
+          path: |
+            /mnt/workdir/staging_dir/toolchain-*
+            /mnt/workdir/.ccache
+          key: toolchain-${{ env.REPO_BRANCH }}-${{ hashFiles(format('configs/{0}/.config', env.REPO_BRANCH)) }}
 
       - name: 整理固件输出并生成编译信息
         run: |
